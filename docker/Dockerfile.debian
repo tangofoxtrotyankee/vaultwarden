@@ -166,7 +166,10 @@ EXPOSE 80
 # and the binary from the "build" stage to the current stage
 WORKDIR /
 
+RUN mkdir -p /etc/vaultwarden.d
+
 COPY docker/healthcheck.sh docker/start.sh /
+COPY docker/railway.sh /etc/vaultwarden.d/railway.sh
 
 COPY --from=vault /web-vault ./web-vault
 COPY --from=build /app/build-output/vaultwarden /vaultwarden
