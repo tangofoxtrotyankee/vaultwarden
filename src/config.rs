@@ -1477,6 +1477,46 @@ impl Config {
             validate_config(&config, false)?;
         }
 
+        // #region agent log
+        {
+            use std::io::Write;
+            let env_mail_provider = get_env::<String>("MAIL_PROVIDER");
+            let log_data = serde_json::json!({
+                "mail_provider_final": config.mail_provider,
+                "mail_provider_env": env_mail_provider,
+                "smtp_host_set": config.smtp_host.is_some(),
+                "use_sendmail": config.use_sendmail,
+                "config_overrides": overrides,
+                "http_mail_build": true,
+            });
+            println!(
+                "[agent-debug][startup] mail_provider='{}' env={:?} smtp_host={:?} overrides={:?}",
+                config.mail_provider, env_mail_provider, config.smtp_host.is_some(), overrides
+            );
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("debug-379825.log")
+            {
+                let _ = writeln!(
+                    f,
+                    "{}",
+                    serde_json::json!({
+                        "sessionId": "379825",
+                        "hypothesisId": "A,B,C,D",
+                        "location": "config.rs:load",
+                        "message": "config loaded",
+                        "data": log_data,
+                        "timestamp": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis())
+                            .unwrap_or(0),
+                    })
+                );
+            }
+        }
+        // #endregion
+
         Ok(Config {
             inner: RwLock::new(Inner {
                 rocket_shutdown_handle: None,

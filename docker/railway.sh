@@ -1,7 +1,8 @@
 #!/bin/sh
 
 # Railway platform defaults — sourced by start.sh via /etc/vaultwarden.d/
-# SMTP_* variables must be set in the Railway service environment.
+# Mail on Railway Hobby: set MAIL_PROVIDER=mailjet (or resend) and API keys in Railway env.
+# SMTP_* is not required when using an HTTP mail provider.
 
 if [ -z "${RAILWAY_ENVIRONMENT:-}" ] && [ -z "${RAILWAY_PUBLIC_DOMAIN:-}" ]; then
     return 0 2>/dev/null || exit 0

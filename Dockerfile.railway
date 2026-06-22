@@ -4,10 +4,11 @@
 # A full release build needs a lot of CPU/RAM and often appears stuck at
 # "Compiling vaultwarden" for 15–30+ minutes (or OOMs on small builders).
 #
-# This image layers Railway-specific config onto the official pre-built image.
-# Override VW_IMAGE in Railway build args to pin a specific release tag.
+# This image layers Railway-specific config onto a pre-built Vaultwarden image.
+# Default: fork image built by .github/workflows/railway-image.yml (includes HTTP mail providers).
+# Override VW_IMAGE in Railway build args to pin a specific tag or digest.
 
-ARG VW_IMAGE=docker.io/vaultwarden/server:latest
+ARG VW_IMAGE=ghcr.io/tangofoxtrotyankee/vaultwarden:latest
 FROM ${VW_IMAGE}
 
 RUN mkdir -p /etc/vaultwarden.d

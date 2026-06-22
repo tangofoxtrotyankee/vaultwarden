@@ -799,7 +799,49 @@ async fn send_with_selected_transport(email: Message) -> EmptyResult {
 }
 
 async fn send_email(address: &str, subject: &str, body_html: String, body_text: String) -> EmptyResult {
-    match CONFIG.mail_provider().as_str() {
+    let provider = CONFIG.mail_provider();
+    let provider_trimmed = provider.trim();
+    // #region agent log
+    {
+        use std::io::Write;
+        let branch = match provider_trimmed {
+            "resend" => "resend",
+            "mailjet" => "mailjet",
+            other => other,
+        };
+        info!(
+            "[agent-debug][send_email] provider='{provider}' trimmed='{provider_trimmed}' branch={branch} smtp_host={:?} http_mail_build=true",
+            CONFIG.smtp_host()
+        );
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("debug-379825.log")
+        {
+            let _ = writeln!(
+                f,
+                "{}",
+                json!({
+                    "sessionId": "379825",
+                    "hypothesisId": "A,D,E",
+                    "location": "mail.rs:send_email",
+                    "message": "routing email",
+                    "data": {
+                        "provider": provider,
+                        "provider_trimmed": provider_trimmed,
+                        "smtp_host_set": CONFIG.smtp_host().is_some(),
+                        "use_sendmail": CONFIG.use_sendmail(),
+                    },
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0),
+                })
+            );
+        }
+    }
+    // #endregion
+    match provider_trimmed {
         "resend" => return send_via_resend(address, subject, &body_html, &body_text).await,
         "mailjet" => return send_via_mailjet(address, subject, &body_html, &body_text).await,
         _ => (),
