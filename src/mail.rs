@@ -9,6 +9,7 @@ use lettre::{
     transport::smtp::extension::ClientId,
 };
 use percent_encoding::{NON_ALPHANUMERIC, percent_encode};
+use reqwest::header::{AUTHORIZATION, HeaderValue};
 
 use crate::{
     CONFIG,
@@ -19,6 +20,7 @@ use crate::{
     },
     db::models::{Device, DeviceType, EmergencyAccessId, MembershipId, OrganizationId, User, UserId},
     error::Error,
+    http_client::make_http_request,
     util::upcase_first,
 };
 
@@ -650,6 +652,102 @@ pub async fn send_protected_action_token(address: &str, token: &str) -> EmptyRes
     send_email(address, &subject, body_html, body_text).await
 }
 
+async fn send_via_resend(address: &str, subject: &str, body_html: &str, body_text: &str) -> EmptyResult {
+    let api_key = match CONFIG.resend_api_key() {
+        Some(key) if !key.is_empty() => key,
+        _ => err!("Resend API key is not configured"),
+    };
+
+    let from = format!("{} <{}>", CONFIG.smtp_from_name(), CONFIG.smtp_from());
+
+    let mut payload = json!({
+        "from": from,
+        "to": [address],
+        "subject": subject,
+        "html": body_html,
+    });
+    if !body_text.is_empty() {
+        payload["text"] = json!(body_text);
+    }
+
+    let auth_header = match HeaderValue::from_str(&format!("Bearer {api_key}")) {
+        Ok(h) => h,
+        Err(e) => err!(format!("Invalid Resend API key: {e}")),
+    };
+
+    let res = match make_http_request(reqwest::Method::POST, "https://api.resend.com/emails")?
+        .header(AUTHORIZATION, auth_header)
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Resend API request failed: {e}");
+            err!(format!("Resend API request failed: {e}"));
+        }
+    };
+
+    let status = res.status();
+    let response_body = res.text().await.unwrap_or_default();
+    if !status.is_success() {
+        error!("Resend API error: HTTP {status} - {response_body}");
+        err!(format!("Resend API error: HTTP {status} - {response_body}"));
+    }
+
+    Ok(())
+}
+
+async fn send_via_mailjet(address: &str, subject: &str, body_html: &str, body_text: &str) -> EmptyResult {
+    let api_key = match CONFIG.mailjet_api_key() {
+        Some(key) if !key.is_empty() => key,
+        _ => err!("Mailjet API key is not configured"),
+    };
+    let secret_key = match CONFIG.mailjet_secret_key() {
+        Some(key) if !key.is_empty() => key,
+        _ => err!("Mailjet secret key is not configured"),
+    };
+
+    let mut message = json!({
+        "From": {
+            "Email": CONFIG.smtp_from(),
+            "Name": CONFIG.smtp_from_name(),
+        },
+        "To": [{ "Email": address }],
+        "Subject": subject,
+    });
+    if !body_text.is_empty() {
+        message["TextPart"] = json!(body_text);
+    }
+    if !body_html.is_empty() {
+        message["HTMLPart"] = json!(body_html);
+    }
+
+    let payload = json!({ "Messages": [message] });
+
+    let res = match make_http_request(reqwest::Method::POST, "https://api.mailjet.com/v3.1/send")?
+        .basic_auth(api_key, Some(&secret_key))
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("Mailjet API request failed: {e}");
+            err!(format!("Mailjet API request failed: {e}"));
+        }
+    };
+
+    let status = res.status();
+    let response_body = res.text().await.unwrap_or_default();
+    if !status.is_success() {
+        error!("Mailjet API error: HTTP {status} - {response_body}");
+        err!(format!("Mailjet API error: HTTP {status} - {response_body}"));
+    }
+
+    Ok(())
+}
+
 async fn send_with_selected_transport(email: Message) -> EmptyResult {
     if CONFIG.use_sendmail() {
         match sendmail_transport().send(email).await {
@@ -701,6 +799,12 @@ async fn send_with_selected_transport(email: Message) -> EmptyResult {
 }
 
 async fn send_email(address: &str, subject: &str, body_html: String, body_text: String) -> EmptyResult {
+    match CONFIG.mail_provider().as_str() {
+        "resend" => return send_via_resend(address, subject, &body_html, &body_text).await,
+        "mailjet" => return send_via_mailjet(address, subject, &body_html, &body_text).await,
+        _ => (),
+    }
+
     let smtp_from = Address::from_str(&CONFIG.smtp_from())?;
 
     let body = if CONFIG.smtp_embed_images() {
