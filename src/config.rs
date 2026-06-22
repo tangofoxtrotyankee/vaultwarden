@@ -863,6 +863,14 @@ make_config! {
     smtp: _enable_smtp {
         /// Enabled
         _enable_smtp:                  bool,   true,   def,     true;
+        /// Mail Provider |> Email transport backend. Use `smtp` (default) for SMTP/sendmail, `resend` for Resend's HTTPS API, or `mailjet` for Mailjet's HTTPS API. Useful on hosts that block outbound SMTP (e.g. Railway Hobby): set `MAIL_PROVIDER=mailjet`, `MAILJET_API_KEY`, `MAILJET_SECRET_KEY`, `SMTP_FROM`, and `SMTP_FROM_NAME`.
+        mail_provider:                 String, true,   def,     "smtp".to_owned();
+        /// Resend API Key |> Required when `MAIL_PROVIDER=resend`. Create one at https://resend.com/api-keys
+        resend_api_key:                Pass,   true,   option;
+        /// Mailjet API Key |> Required when `MAIL_PROVIDER=mailjet`. Create one at https://app.mailjet.com/account/apikeys
+        mailjet_api_key:               Pass,   true,   option;
+        /// Mailjet Secret Key |> Required when `MAIL_PROVIDER=mailjet`
+        mailjet_secret_key:            Pass,   true,   option;
         /// Use Sendmail |> Whether to send mail via the `sendmail` command
         use_sendmail:                  bool,   true,   def,     false;
         /// Sendmail Command |> Which sendmail command to use. The one found in the $PATH is used if not specified.
@@ -894,7 +902,7 @@ make_config! {
         /// Embed images as email attachments.
         smtp_embed_images:             bool, true, def, true;
         /// _smtp_img_src
-        _smtp_img_src:                 String, false, generated, |c| generate_smtp_img_src(c.smtp_embed_images, &c.domain);
+        _smtp_img_src:                 String, false, generated, |c| generate_smtp_img_src(c.smtp_embed_images, &c.domain, &c.mail_provider);
         /// Enable SMTP debugging (Know the risks!) |> DANGEROUS: Enabling this will output very detailed SMTP messages. This could contain sensitive information like passwords and usernames! Only enable this during troubleshooting!
         smtp_debug:                    bool,   false,  def,     false;
         /// Accept Invalid Certs (Know the risks!) |> DANGEROUS: Allow invalid certificates. This option introduces significant vulnerabilities to man-in-the-middle attacks!
@@ -906,7 +914,7 @@ make_config! {
     /// Email 2FA Settings
     email_2fa: _enable_email_2fa {
         /// Enabled |> Disabling will prevent users from setting up new email 2FA and using existing email 2FA configured
-        _enable_email_2fa:      bool,   true,   auto,    |c| c._enable_smtp && (c.smtp_host.is_some() || c.use_sendmail);
+        _enable_email_2fa:      bool,   true,   auto,    |c| c._enable_smtp && (c.smtp_host.is_some() || c.use_sendmail || is_http_mail_provider(&c.mail_provider));
         /// Email token size |> Number of digits in an email 2FA token (min: 6, max: 255). Note that the Bitwarden clients are hardcoded to mention 6 digit codes regardless of this setting.
         email_token_size:       u8,     true,   def,      6;
         /// Token expiration time |> Maximum time in seconds a token is valid. The time the user has to open email client and copy token.
@@ -1102,14 +1110,45 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
     }
 
     if cfg._enable_smtp {
-        match cfg.smtp_security.as_str() {
-            "off" | "starttls" | "force_tls" => (),
-            _ => err!(
-                "`SMTP_SECURITY` is invalid. It needs to be one of the following options: starttls, force_tls or off"
-            ),
+        let use_resend = cfg.mail_provider == "resend";
+        let use_mailjet = cfg.mail_provider == "mailjet";
+        let use_http = is_http_mail_provider(&cfg.mail_provider);
+
+        if cfg.mail_provider != "smtp" && !use_http {
+            err!("`MAIL_PROVIDER` is invalid. It needs to be `smtp`, `resend`, or `mailjet`");
         }
 
-        if cfg.use_sendmail {
+        if use_resend {
+            if cfg.resend_api_key.as_ref().is_none_or(|k| k.is_empty()) {
+                err!("`RESEND_API_KEY` must be set when `MAIL_PROVIDER=resend`");
+            }
+            if cfg.smtp_from.is_empty() || !is_valid_email(&cfg.smtp_from) {
+                err!(format!(
+                    "`SMTP_FROM` must be set to a valid email address when `MAIL_PROVIDER=resend`"
+                ));
+            }
+        } else if use_mailjet {
+            if cfg.mailjet_api_key.as_ref().is_none_or(|k| k.is_empty()) {
+                err!("`MAILJET_API_KEY` must be set when `MAIL_PROVIDER=mailjet`");
+            }
+            if cfg.mailjet_secret_key.as_ref().is_none_or(|k| k.is_empty()) {
+                err!("`MAILJET_SECRET_KEY` must be set when `MAIL_PROVIDER=mailjet`");
+            }
+            if cfg.smtp_from.is_empty() || !is_valid_email(&cfg.smtp_from) {
+                err!(format!(
+                    "`SMTP_FROM` must be set to a valid email address when `MAIL_PROVIDER=mailjet`"
+                ));
+            }
+        } else {
+            match cfg.smtp_security.as_str() {
+                "off" | "starttls" | "force_tls" => (),
+                _ => err!(
+                    "`SMTP_SECURITY` is invalid. It needs to be one of the following options: starttls, force_tls or off"
+                ),
+            }
+        }
+
+        if !use_http && cfg.use_sendmail {
             let command = cfg.sendmail_command.clone().unwrap_or_else(|| format!("sendmail{EXE_SUFFIX}"));
 
             let mut path = std::path::PathBuf::from(&command);
@@ -1142,7 +1181,7 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
                     }
                 }
             }
-        } else {
+        } else if !use_http {
             if cfg.smtp_host.is_some() == cfg.smtp_from.is_empty() {
                 err!("Both `SMTP_HOST` and `SMTP_FROM` need to be set for email support without `USE_SENDMAIL`")
             }
@@ -1154,7 +1193,10 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
             }
         }
 
-        if (cfg.smtp_host.is_some() || cfg.use_sendmail) && !is_valid_email(&cfg.smtp_from) {
+        if !use_http
+            && (cfg.smtp_host.is_some() || cfg.use_sendmail)
+            && !is_valid_email(&cfg.smtp_from)
+        {
             err!(format!("SMTP_FROM '{}' is not a valid email address", cfg.smtp_from))
         }
 
@@ -1163,7 +1205,7 @@ fn validate_config(cfg: &ConfigItems, on_update: bool) -> Result<(), Error> {
         }
     }
 
-    if cfg._enable_email_2fa && !(cfg.smtp_host.is_some() || cfg.use_sendmail) {
+    if cfg._enable_email_2fa && !(cfg.smtp_host.is_some() || cfg.use_sendmail || is_http_mail_provider(&cfg.mail_provider)) {
         err!("To enable email 2FA, a mail transport must be configured")
     }
 
@@ -1319,8 +1361,13 @@ fn extract_url_path(url: &str) -> String {
     }
 }
 
-fn generate_smtp_img_src(embed_images: bool, domain: &str) -> String {
-    if embed_images {
+fn is_http_mail_provider(mail_provider: &str) -> bool {
+    matches!(mail_provider, "resend" | "mailjet")
+}
+
+fn generate_smtp_img_src(embed_images: bool, domain: &str, mail_provider: &str) -> String {
+    // HTTP mail providers send without MIME attachments; use hosted image URLs instead of cid:.
+    if embed_images && !is_http_mail_provider(mail_provider) {
         "cid:".to_owned()
     } else {
         // normalize base_url
@@ -1567,7 +1614,8 @@ impl Config {
     }
     pub fn mail_enabled(&self) -> bool {
         let inner = &self.inner.read().unwrap().config;
-        inner._enable_smtp && (inner.smtp_host.is_some() || inner.use_sendmail)
+        inner._enable_smtp
+            && (inner.smtp_host.is_some() || inner.use_sendmail || is_http_mail_provider(&inner.mail_provider))
     }
 
     pub async fn get_duo_akey(&self) -> String {
