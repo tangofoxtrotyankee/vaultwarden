@@ -32,14 +32,14 @@ jobs:
           persist-credentials: false
 
       - name: Log in to GHCR
-        uses: docker/login-action@5e57cd146aa1e8c94c4b26acd7e02ebd1f7c375d # v3.6.0
+        uses: docker/login-action@v3 # v3.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        uses: docker/build-push-action@263435318d21b8e681c14493af8ad96076438420 # v6.18.0
+        uses: uses: docker/build-push-action@v6 # v6.18.0
         with:
           context: .
           file: docker/Dockerfile.debian
