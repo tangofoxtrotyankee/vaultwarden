@@ -1498,7 +1498,7 @@ impl Config {
                 .append(true)
                 .open("debug-379825.log")
             {
-                let _ = writeln!(
+                let _unused = writeln!(
                     f,
                     "{}",
                     serde_json::json!({
