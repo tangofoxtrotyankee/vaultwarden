@@ -818,7 +818,7 @@ async fn send_email(address: &str, subject: &str, body_html: String, body_text: 
             .append(true)
             .open("debug-379825.log")
         {
-            let _ = writeln!(
+            let _unused = writeln!(
                 f,
                 "{}",
                 json!({
