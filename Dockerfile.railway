@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1
 #
-# Railway deployment image — do NOT compile Vaultwarden on Railway.
-# A full release build needs a lot of CPU/RAM and often appears stuck at
-# "Compiling vaultwarden" for 15–30+ minutes (or OOMs on small builders).
+# Optional fast Railway deploy — layers Railway config on a pre-built fork image from GHCR.
+# Requires the "Railway Docker Image" GitHub Action to have pushed:
+#   ghcr.io/tangofoxtrotyankee/vaultwarden:latest
 #
-# This image layers Railway-specific config onto a pre-built Vaultwarden image.
-# Default: fork image built by .github/workflows/railway-image.yml (includes HTTP mail providers).
-# Override VW_IMAGE in Railway build args to pin a specific tag or digest.
+# Default Railway deploy uses docker/Dockerfile.debian (see railway.json) and builds from source.
+# To use this thin image instead, set railway.json dockerfilePath to "Dockerfile.railway"
+# and make the GHCR package public (or configure Railway with GHCR credentials).
 
 ARG VW_IMAGE=ghcr.io/tangofoxtrotyankee/vaultwarden:latest
 FROM ${VW_IMAGE}
